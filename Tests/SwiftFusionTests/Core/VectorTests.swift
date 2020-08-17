@@ -1,283 +1,207 @@
 import Foundation
+import PenguinTesting
 import TensorFlow
 import XCTest
 
 import SwiftFusion
 
-/// Conform to this and call `runAllFixedSizeVectorTests()` to test all the `FixedSizeVector`
-/// requirements on a concrete type.
-protocol FixedSizeVectorTests {
-  /// The concrete type that we are testing.
-  associatedtype Testee: FixedSizeVector
+extension Vector {
+  /// XCTests `self`'s semantic conformance to `Vector`, expecting its scalars to match
+  /// `expectedScalars`.
+  ///
+  /// Note: This does check the semantics of the vector math operations, but only using vectors
+  /// that have the same `scalar.indices` as `self`. If `Self` supports vector operations between
+  /// instances between different `scalars.indices`, then tests should additionally call
+  /// `checkVectorMathSemantics` with examples of vectors with differing `scalars.indices`.
+  ///
+  /// - Parameter doesNotSupportTwoScalars: pass `true` when `Self` does not have instances with
+  ///   `dimension >= 2`.
+  /// - Requires: `!distinctScalars.elementsEqual(self.scalars)`.
+  /// - Complexity: O(N²), where N is `self.dimension`.
+  func checkVectorSemantics<S1: Collection, S2: Collection>(
+    expecting expectedScalars: S1,
+    writing distinctScalars: S2,
+    doesNotSupportTwoScalars: Bool = false
+  ) where S1.Element == Double, S2.Element == Double {
+    self.scalars.checkCollectionSemantics(
+      expecting: expectedScalars, doesNotSupportTwoElements: doesNotSupportTwoScalars)
 
-  /// The dimension of the vector we are testing.
-  static var dimension: Int { get }
-}
+    var mutableScalars = self.scalars
+    mutableScalars.checkMutableCollectionSemantics(writing: distinctScalars)
 
-extension FixedSizeVectorTests {
-  /// A set of basis vectors.
-  fileprivate var basisVectors: [Testee] {
-    return (0..<Self.dimension).map { index in
-      var v = Array(repeating: Double(0), count: Self.dimension)
-      v[index] = 1
-      return Testee(v)
-    }
-  }
+    XCTAssertEqual(self.dimension, expectedScalars.count)
 
-  /// Make a vector whose first element is `start` and whose subsequent elements increment by
-  /// `stride`.
-  fileprivate func makeVector(from start: Double, stride: Double) -> Testee {
-    return Testee(Array((0..<Self.dimension).map { start + Double($0) * stride }))
-  }
+    // Check that setting `scalars` actually changes it.
+    var mutableSelf = self
+    for (i, e) in zip(mutableSelf.scalars.indices, distinctScalars) { mutableSelf.scalars[i] = e }
+    XCTAssertTrue(mutableSelf.scalars.elementsEqual(distinctScalars))
 
-  /// Tests all `FixedSizeVector` requirements.
-  func runAllFixedSizeVectorTests() {
-    testEquality()
-    testMove()
-    testAddMutating()
-    testAddFunctional()
-    testSubtractMutating()
-    testSubtractFunctional()
-    testScalarProductMutating()
-    testScalarProductFunctional()
-    testDot()
-    testNegate()
-    testSquaredNorm()
-    testNorm()
-    testDimension()
-    testWithUnsafeBufferPointer()
-    testWithUnsafeMutableBufferPointer()
-    testInitFromFlatTensor()
-    testFlatTensor()
-  }
-
-  /// Tests ==.
-  func testEquality() {
-    let v1 = makeVector(from: 0, stride: 0)
-    let v2 = makeVector(from: 1, stride: 0)
-    XCTAssertTrue(v1 == v1)
-    XCTAssertFalse(v1 == v2)
-  }
-
-  /// Tests move (exponential map).
-  func testMove() {
-    var v = makeVector(from: 0, stride: 1)
-    let t = makeVector(from: 1, stride: 1)
-    v.move(along: t)
-    XCTAssertEqual(v, makeVector(from: 1, stride: 2))
-  }
-
-  /// Tests the value and derivative of the mutating +=.
-  func testAddMutating() {
-    func doMutatingAdd(_ v1: Testee, _ v2: Testee) -> Testee {
-      var result = v1
-      result += v2
-      return result
+    // Returns a vector with the same `scalars.indices` as `self` but with the scalars replaced
+    // by the stride from `start` by `stride`.
+    func stride(from start: Double, by stride: Double) -> Self {
+      var r = self
+      for (i, e) in zip(
+        r.scalars.indices,
+        Swift.stride(from: start, to: start + Double(r.dimension) * stride, by: stride)
+      ) {
+        r.scalars[i] = e
+      }
+      return r
     }
 
-    let v1 = makeVector(from: 1, stride: 1)
-    let v2 = makeVector(from: 2, stride: 1)
-    XCTAssertEqual(doMutatingAdd(v1, v2), makeVector(from: 3, stride: 2))
+    stride(from: 1, by: 1).checkVectorMathSemantics(
+      other: stride(from: 10, by: 10),
+      expectedPlusOther: stride(from: 11, by: 11),
+      expectedMinusOther: stride(from: -9, by: -9),
+      expectedDotOther:
+        Double(10 * self.dimension * (self.dimension + 1) * (2 * self.dimension + 1) / 6),
+      scaleFactor: 7,
+      expectedScaled: stride(from: 7, by: 7))
 
-    let (value, pb) = valueWithPullback(at: v1, v2, in: doMutatingAdd)
-    XCTAssertEqual(value, makeVector(from: 3, stride: 2))
-    for v in basisVectors {
-      XCTAssertEqual(pb(v).0, v)
-      XCTAssertEqual(pb(v).1, v)
-    }
-  }
-
-  /// Tests the value and derivative of the functional +.
-  func testAddFunctional() {
-    let v1 = makeVector(from: 1, stride: 1)
-    let v2 = makeVector(from: 2, stride: 1)
-    XCTAssertEqual(v1 + v2, makeVector(from: 3, stride: 2))
-
-    let (value, pb) = valueWithPullback(at: v1, v2, in: +)
-    XCTAssertEqual(value, makeVector(from: 3, stride: 2))
-    for v in basisVectors {
-      XCTAssertEqual(pb(v).0, v)
-      XCTAssertEqual(pb(v).1, v)
-    }
-  }
-
-  /// Tests the value and derivative of the mutating -=.
-  func testSubtractMutating() {
-    func doMutatingSubtract(_ v1: Testee, _ v2: Testee) -> Testee {
-      var result = v1
-      result -= v2
-      return result
-    }
-
-    let v1 = makeVector(from: 1, stride: 1)
-    let v2 = makeVector(from: 1, stride: -1)
-    XCTAssertEqual(doMutatingSubtract(v1, v2), makeVector(from: 0, stride: 2))
-
-    let (value, pb) = valueWithPullback(at: v1, v2, in: doMutatingSubtract)
-    XCTAssertEqual(value, makeVector(from: 0, stride: 2))
-    for v in basisVectors {
-      XCTAssertEqual(pb(v).0, v)
-      XCTAssertEqual(pb(v).1, -v)
-    }
-  }
-
-  /// Tests the value and derivative of the functional -.
-  func testSubtractFunctional() {
-    let v1 = makeVector(from: 1, stride: 1)
-    let v2 = makeVector(from: 1, stride: -1)
-    XCTAssertEqual(v1 - v2, makeVector(from: 0, stride: 2))
-
-    let (value, pb) = valueWithPullback(at: v1, v2, in: -)
-    XCTAssertEqual(value, makeVector(from: 0, stride: 2))
-    for v in basisVectors {
-      XCTAssertEqual(pb(v).0, v)
-      XCTAssertEqual(pb(v).1, -v)
-    }
-  }
-
-  /// Tests the value and derivative of the mutating *=.
-  func testScalarProductMutating() {
-    func doMutatingScalarProduct(_ s: Double, _ v1: Testee) -> Testee {
-      var result = v1
-      result *= s
-      return result
-    }
-
-    let s = Double(2)
-    let v1 = makeVector(from: 1, stride: 1)
-    XCTAssertEqual(doMutatingScalarProduct(s, v1), makeVector(from: 2, stride: 2))
-
-    let (value, pb) = valueWithPullback(at: s, v1, in: doMutatingScalarProduct)
-    XCTAssertEqual(value, makeVector(from: 2, stride: 2))
-    for (index, v) in basisVectors.enumerated() {
-      XCTAssertEqual(pb(v).0, Double(index + 1))
-      XCTAssertEqual(pb(v).1, 2 * v)
-    }
-  }
-
-  /// Tests the value and derivative of the functional *.
-  func testScalarProductFunctional() {
-    let s = Double(2)
-    let v1 = makeVector(from: 1, stride: 1)
-    XCTAssertEqual(s * v1, makeVector(from: 2, stride: 2))
-
-    let (value, pb) = valueWithPullback(at: s, v1, in: *)
-    XCTAssertEqual(value, makeVector(from: 2, stride: 2))
-    for (index, v) in basisVectors.enumerated() {
-      XCTAssertEqual(pb(v).0, Double(index + 1))
-      XCTAssertEqual(pb(v).1, 2 * v)
-    }
-  }
-
-  /// Tests the value and derivative of `dot`.
-  func testDot() {
-    let v1 = makeVector(from: 1, stride: 1)
-    let v2 = makeVector(from: 2, stride: 1)
-    let expectedDot = (0..<Self.dimension).reduce(into: 0) { (r: inout Double, i: Int) in
-      let x = Double(i) + 1
-      let y = Double(i) + 2
-      r += x * y
-    }
-    XCTAssertEqual(v1.dot(v2), expectedDot)
-
-    let (value, g) = valueWithGradient(at: v1, v2) { $0.dot($1) }
-    XCTAssertEqual(value, expectedDot)
-    XCTAssertEqual(g.0, v2)
-    XCTAssertEqual(g.1, v1)
-  }
-
-  /// Tests the value and derivative of the prefix unary -.
-  func testNegate() {
-    let v1 = makeVector(from: 1, stride: 1)
-    XCTAssertEqual(-v1, makeVector(from: -1, stride: -1))
-
-    let (value, pb) = valueWithPullback(at: v1) { -$0 }
-    XCTAssertEqual(value, makeVector(from: -1, stride: -1))
-    for v in basisVectors {
-      XCTAssertEqual(pb(v), -v)
-    }
-  }
-
-  /// Tests the value and derivative of `squaredNorm`.
-  func testSquaredNorm() {
-    let v1 = makeVector(from: 1, stride: 1)
-    let expectedSquaredNorm = (0..<Self.dimension).reduce(into: 0) { (r: inout Double, i: Int) in
-      let x = Double(i) + 1
-      r += x * x
-    }
-    XCTAssertEqual(v1.squaredNorm, expectedSquaredNorm)
-
-    let (value, g) = valueWithGradient(at: v1) { $0.squaredNorm }
-    XCTAssertEqual(value, expectedSquaredNorm)
-    XCTAssertEqual(g, 2 * v1)
-  }
-
-  /// Tests the value and derivative of `norm`.
-  func testNorm() {
-    let v1 = makeVector(from: 1, stride: 1)
-    let expectedNorm = (0..<Self.dimension).reduce(into: 0) { (r: inout Double, i: Int) in
-      let x = Double(i) + 1
-      r += x * x
-    }.squareRoot()
-    XCTAssertEqual(v1.norm, expectedNorm)
-
-    let (value, g) = valueWithGradient(at: v1) { $0.norm }
-    XCTAssertEqual(value, expectedNorm)
-    XCTAssertEqual(g, (1 / v1.norm) * v1)
-  }
-
-  /// Tests that the dimension is correct.
-  func testDimension() {
-    XCTAssertEqual(Testee.dimension, Self.dimension)
-  }
-
-  func testWithUnsafeBufferPointer() {
-    let v = makeVector(from: 1, stride: 1)
-    v.withUnsafeBufferPointer { b in
-      XCTAssertEqual(Array(b), Array(1..<(Self.dimension+1)).map { Double($0) })
-    }
-  }
-
-  func testWithUnsafeMutableBufferPointer() {
-    var v = makeVector(from: 1, stride: 1)
-    v.withUnsafeMutableBufferPointer { b in
-      XCTAssertEqual(Array(b), Array(1..<(Self.dimension+1)).map { Double($0) })
-      for i in 0..<b.count {
-        b[i] = -Double(i)
+    self.withUnsafeBufferPointer { b in
+      XCTAssertEqual(b.count, expectedScalars.count)
+      for (actual, expected) in zip(b, expectedScalars) {
+        XCTAssertEqual(actual, expected)
       }
     }
-    XCTAssertEqual(v, makeVector(from: 0, stride: -1))
+
+    mutableSelf = self
+    mutableSelf.withUnsafeMutableBufferPointer { b in
+      for (i, j) in zip(b.indices, distinctScalars.indices) {
+        b[i] = distinctScalars[j]
+      }
+    }
+    XCTAssertTrue(mutableSelf.scalars.elementsEqual(distinctScalars))
   }
 
-  func testInitFromFlatTensor() {
-    let t = Tensor(shape: [Self.dimension], scalars: Array(0..<Self.dimension).map { Double($0) })
-    let v = Testee(flatTensor: t)
-    let expectedV = makeVector(from: 0, stride: 1)
-    XCTAssertEqual(v, expectedV)
+  /// XCTests the semantics of vector math operations on `self`.
+  public func checkVectorMathSemantics(
+    other: Self,
+    expectedPlusOther: Self,
+    expectedMinusOther: Self,
+    expectedDotOther: Double,
+    scaleFactor: Double,
+    expectedScaled: Self
+  ) {
+    let zero = self.zeroTangentVector
 
-    let (value, pb) = valueWithPullback(at: t) { Testee(flatTensor: $0) }
-    XCTAssertEqual(value, expectedV)
-    for b in basisVectors {
-      XCTAssertEqual(pb(b), b.flatTensor)
+    zero.checkPlus(zero, equals: zero)
+    self.checkPlus(zero, equals: self)
+    zero.checkPlus(self, equals: self)
+    self.checkPlus(-self, equals: zero)
+
+    zero.checkMinus(zero, equals: zero)
+    self.checkMinus(zero, equals: self)
+    zero.checkMinus(self, equals: -self)
+    self.checkMinus(self, equals: zero)
+
+    self.checkTimes(0, equals: zero)
+    self.checkTimes(1, equals: self)
+    self.checkTimes(-1, equals: -self)
+
+    self.checkPlus(other, equals: expectedPlusOther)
+    other.checkPlus(self, equals: expectedPlusOther)
+
+    self.checkMinus(other, equals: expectedMinusOther)
+    other.checkMinus(self, equals: -expectedMinusOther)
+
+    self.checkTimes(scaleFactor, equals: expectedScaled)
+
+    self.checkDot(other, equals: expectedDotOther)
+    other.checkDot(self, equals: expectedDotOther)
+  }
+
+  /// XCTests the semantics of the mutating and nonmutating addition operations at `(self, other)`,
+  /// and their derivatives.
+  private func checkPlus(_ other: Self, equals expectedResult: Self) {
+    // Do the checks in a closure so that we can check both the mutating and nonmutating versions.
+    func check(_ f: @differentiable (Self, Self) -> Self) {
+      XCTAssertEqual(f(self, other), expectedResult)
+
+      let (result, pb) = valueWithPullback(at: self, other, in: f)
+      XCTAssertEqual(result, expectedResult)
+      for v in result.unitVectors {
+        XCTAssertEqual(pb(v).0, v)
+        XCTAssertEqual(pb(v).1, v)
+      }
+    }
+
+    check { $0 + $1 }
+    check {
+      var r = $0
+      r += $1
+      return r
     }
   }
 
-  func testFlatTensor() {
-    let v = makeVector(from: 0, stride: 1)
-    let t = v.flatTensor
-    let expectedT = Tensor(shape: [Self.dimension], scalars: Array(0..<Self.dimension).map { Double($0) })
-    XCTAssertEqual(t, expectedT)
+  /// XCTests the semantics of the mutating and nonmutating subtraction operations at `(self, other)`,
+  /// and their derivatives.
+  private func checkMinus(_ other: Self, equals expectedResult: Self) {
+    // Do the checks in a closure so that we can check both the mutating and nonmutating versions.
+    func check(_ f: @differentiable (Self, Self) -> Self) {
+      XCTAssertEqual(f(self, other), expectedResult)
 
-    let (value, pb) = valueWithPullback(at: v) { $0.flatTensor }
-    XCTAssertEqual(value, expectedT)
-    for b in basisVectors {
-      XCTAssertEqual(pb(b.flatTensor), b)
+      let (result, pb) = valueWithPullback(at: self, other, in: f)
+      XCTAssertEqual(result, expectedResult)
+      for v in result.unitVectors {
+        XCTAssertEqual(pb(v).0, v)
+        XCTAssertEqual(pb(v).1, -v)
+      }
+    }
+
+    check { $0 - $1 }
+    check {
+      var r = $0
+      r -= $1
+      return r
+    }
+  }
+
+  /// XCTests the semantics of the mutating and nonmutating scalar multiplication operations at
+  /// `(self, scaleFactor)`, and their derivatives.
+  private func checkTimes(_ scaleFactor: Double, equals expectedResult: Self) {
+    // Do the checks in a closure so that we can check both the mutating and nonmutating versions.
+    func check(_ f: @differentiable (Double, Self) -> Self) {
+      XCTAssertEqual(f(scaleFactor, self), expectedResult)
+
+      let (result, pb) = valueWithPullback(at: scaleFactor, self, in: f)
+      XCTAssertEqual(result, expectedResult)
+      for v in result.unitVectors {
+        XCTAssertEqual(pb(v).0, v.dot(self))
+        XCTAssertEqual(pb(v).1, scaleFactor * v)
+      }
+    }
+
+    check { $0 * $1 }
+    check {
+      var r = $1
+      r *= $0
+      return r
+    }
+  }
+
+  /// XCTests the semantics of the inner product operation at `(self, other)`, and its derivative.
+  private func checkDot(_ other: Self, equals expectedResult: Double) {
+    XCTAssertEqual(self.dot(other), expectedResult)
+
+    let (result, pb) = valueWithPullback(at: self, other) { $0.dot($1) }
+    XCTAssertEqual(result, expectedResult)
+    XCTAssertEqual(pb(1).0, other)
+    XCTAssertEqual(pb(1).1, self)
+  }
+
+  /// For each `i` in `self.scalars.indices`, a vectors with the same `scalars.indices` as `self` but
+  /// with a `1` at `i` and `0`s at all other indices.
+  private var unitVectors: LazyMapCollection<Scalars.Indices, Self> {
+    self.scalars.indices.lazy.map { i in
+      var r = self.zeroTangentVector
+      r.scalars[i] = 1
+      return r
     }
   }
 }
 
-/// Tests methods that involve multiple distinct euclidean vector types.
-class MultipleVectorTests: XCTestCase {
+class VectorConversionTests: XCTestCase {
   /// Tests converting from one type to another type with the same number of elements.
   func testConversion() {
     let v = Vector9(0, 1, 2, 3, 4, 5, 6, 7, 8)
@@ -312,5 +236,29 @@ class MultipleVectorTests: XCTestCase {
     XCTAssertEqual(pb(Vector5(0, 0, 1, 0, 0)).1, Vector3(1, 0, 0))
     XCTAssertEqual(pb(Vector5(0, 0, 0, 1, 0)).1, Vector3(0, 1, 0))
     XCTAssertEqual(pb(Vector5(0, 0, 0, 0, 1)).1, Vector3(0, 0, 1))
+  }
+
+  func testConvertToTensor() {
+    let v = Vector3(1, 2, 3)
+    let expectedT = Tensor<Double>([1, 2, 3])
+    XCTAssertEqual(v.flatTensor, expectedT)
+
+    let (value, pb) = valueWithPullback(at: v) { $0.flatTensor }
+    XCTAssertEqual(value, expectedT)
+    XCTAssertEqual(pb(Tensor([1, 0, 0])), Vector3(1, 0, 0))
+    XCTAssertEqual(pb(Tensor([0, 1, 0])), Vector3(0, 1, 0))
+    XCTAssertEqual(pb(Tensor([0, 0, 1])), Vector3(0, 0, 1))
+  }
+
+  func testConvertFromTensor() {
+    let t = Tensor<Double>([1, 2, 3])
+    let expectedV = Vector3(1, 2, 3)
+    XCTAssertEqual(Vector3(flatTensor: t), expectedV)
+
+    let (value, pb) = valueWithPullback(at: t) { Vector3(flatTensor: $0) }
+    XCTAssertEqual(value, expectedV)
+    XCTAssertEqual(pb(Vector3(1, 0, 0)), Tensor([1, 0, 0]))
+    XCTAssertEqual(pb(Vector3(0, 1, 0)), Tensor([0, 1, 0]))
+    XCTAssertEqual(pb(Vector3(0, 0, 1)), Tensor([0, 0, 1]))
   }
 }

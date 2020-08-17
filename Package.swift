@@ -23,7 +23,7 @@ let package = Package(
     // .package(url: /* package url */, from: "1.0.0"),
     .package(url: "https://github.com/google/swift-benchmark.git", .branch("master")),
 
-    .package(url: "https://github.com/saeta/penguin.git", .branch("master")),
+    .package(url: "https://github.com/saeta/penguin.git", .branch("smaller_collection_test_support")),
 
     .package(url: "https://github.com/ProfFan/tensorboardx-s4tf.git", from: "0.1.3"),
     .package(url: "https://github.com/apple/swift-tools-support-core.git", .branch("swift-5.2-branch")),
@@ -56,6 +56,7 @@ let package = Package(
       name: "SwiftFusionTests",
       dependencies: [
         "SwiftFusion",
+        "PenguinTesting",
         .product(name: "ModelSupport", package: "swift-models"),
       ]),
     .testTarget(
