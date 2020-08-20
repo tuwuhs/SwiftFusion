@@ -120,7 +120,7 @@ extension Vector {
 
       let (result, pb) = valueWithPullback(at: self, other, in: f)
       XCTAssertEqual(result, expectedResult)
-      for v in result.unitVectors {
+      for v in result.standardBasis {
         XCTAssertEqual(pb(v).0, v)
         XCTAssertEqual(pb(v).1, v)
       }
@@ -143,7 +143,7 @@ extension Vector {
 
       let (result, pb) = valueWithPullback(at: self, other, in: f)
       XCTAssertEqual(result, expectedResult)
-      for v in result.unitVectors {
+      for v in result.standardBasis {
         XCTAssertEqual(pb(v).0, v)
         XCTAssertEqual(pb(v).1, -v)
       }
@@ -166,7 +166,7 @@ extension Vector {
 
       let (result, pb) = valueWithPullback(at: scaleFactor, self, in: f)
       XCTAssertEqual(result, expectedResult)
-      for v in result.unitVectors {
+      for v in result.standardBasis {
         XCTAssertEqual(pb(v).0, v.dot(self))
         XCTAssertEqual(pb(v).1, scaleFactor * v)
       }
@@ -190,9 +190,8 @@ extension Vector {
     XCTAssertEqual(pb(1).1, self)
   }
 
-  /// For each `i` in `self.scalars.indices`, a vectors with the same `scalars.indices` as `self` but
-  /// with a `1` at `i` and `0`s at all other indices.
-  private var unitVectors: LazyMapCollection<Scalars.Indices, Self> {
+  /// The standard basis vectors with the same shape as `self`.
+  private var standardBasis: LazyMapCollection<Scalars.Indices, Self> {
     self.scalars.indices.lazy.map { i in
       var r = self.zeroTangentVector
       r.scalars[i] = 1
