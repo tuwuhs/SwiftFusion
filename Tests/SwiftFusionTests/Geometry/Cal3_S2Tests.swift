@@ -30,6 +30,14 @@ final class Cal3_S2Tests: XCTestCase {
     XCTAssertEqual(K.calibrate(K.uncalibrate(np)), np)
   }
 
+  /// Tests easy constructor (fov).
+  func testEasyConstructor() {
+    let K = Cal3_S2(fov: 60, w: 640, h: 480)
+    let expected = Cal3_S2(fx: 554.256, fy: 554.256, s: 0, u0: 640.0 / 2, v0: 480.0 / 2);
+
+    assertAllKeyPathEqual(K.coordinate.asVector(), expected.coordinate.asVector(), accuracy: 1e-3)
+  }
+
   /// Tests manifold.
   func testManifold() {
     var K1 = Cal3_S2(fx: 200.0, fy: 200.0, s: 1.0, u0: 320.0, v0: 240.0)

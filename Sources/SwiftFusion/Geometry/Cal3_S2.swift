@@ -19,6 +19,12 @@ public struct Cal3_S2: Manifold, Equatable {
     self.init(coordinateStorage: Cal3_S2Coordinate(fx: fx, fy: fy, s: s, u0: u0, v0: v0))
   }
 
+  /// Initializes from fov in degrees with zero skew and unit aspect ratio.
+  public init(fov: Double, w: Double, h: Double) {
+    let f = w / (2.0 * .tan(fov * .pi / 360.0))
+    self.init(coordinateStorage: Cal3_S2Coordinate(fx: f, fy: f, s: 0, u0: w/2, v0: h/2))
+  }
+
   /// Moves the parameter values by the specified direction.
   public mutating func move(along direction: Vector5) {
     coordinateStorage = coordinateStorage.retract(direction)
